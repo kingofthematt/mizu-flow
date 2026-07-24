@@ -12,7 +12,7 @@ Run this once from the project folder (it will open browser login if needed):
 .\deploy.ps1
 ```
 
-Your site will be published at `https://<your-github-username>.github.io/mizu-flow/`.
+**Live site:** [https://kingofthematt.github.io/mizu-flow/](https://kingofthematt.github.io/mizu-flow/)
 
 
 Open `index.html` in your browser, or run a simple server:
