@@ -2,11 +2,18 @@
 
 A landing page for **Mizu Flow** — a hydration reminder app with a calm, water-inspired aesthetic.
 
-## Live site
+## Deploy to GitHub Pages
 
-Hosted on GitHub Pages.
+Local git is initialized and committed. GitHub CLI is installed.
 
-## Local preview
+Run this once from the project folder (it will open browser login if needed):
+
+```powershell
+.\deploy.ps1
+```
+
+Your site will be published at `https://<your-github-username>.github.io/mizu-flow/`.
+
 
 Open `index.html` in your browser, or run a simple server:
 
