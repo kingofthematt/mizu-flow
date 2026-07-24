@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch]$Login
 )
 
@@ -7,8 +7,15 @@ $ErrorActionPreference = "Stop"
 
 $gitCmd = "C:\Program Files\Git\cmd"
 $ghCli = "C:\Program Files\GitHub CLI"
-$env:Path = "$gitCmd;$ghCli;" + $env:Path
+$ghExe = Join-Path $ghCli "gh.exe"
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$env:Path = "$gitCmd;$ghCli;$machinePath;$userPath"
 Set-Location $PSScriptRoot
+
+function Test-InteractiveConsole {
+    return (-not [Console]::IsInputRedirected) -and ($Host.Name -ne "Server")
+}
 
 function Require-Command {
     param([string]$Name, [string]$InstallHint)
@@ -25,7 +32,7 @@ function Invoke-Gh {
     )
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $output = & gh @GhArgs 2>&1
+    $output = & $ghExe @GhArgs 2>&1
     $exitCode = $LASTEXITCODE
     $ErrorActionPreference = $prev
     if (-not $AllowFailure -and $exitCode -ne 0) {
@@ -38,37 +45,66 @@ function Invoke-Gh {
 }
 
 function Test-GhAuth {
-    cmd /c "gh auth status >nul 2>nul"
-    return ($LASTEXITCODE -eq 0)
+    if ($env:GH_TOKEN -or $env:GITHUB_TOKEN) {
+        $r = Invoke-Gh api user --jq .login -AllowFailure
+        if ($r[1] -eq 0 -and ($r[0] | Out-String).Trim()) { return $true }
+    }
+    $r = Invoke-Gh auth status --hostname github.com -AllowFailure
+    return ($r[1] -eq 0)
+}
+
+function Test-IncompleteGhLogin {
+    $hosts = Join-Path $env:USERPROFILE ".config\gh\hosts.yml"
+    $deviceId = Join-Path $env:LOCALAPPDATA "GitHub CLI\device-id"
+    return ((-not (Test-Path $hosts)) -and (Test-Path $deviceId))
+}
+
+function Invoke-GhLogin {
+    Write-Host ""
+    Write-Host "Starting GitHub login in your browser..." -ForegroundColor Cyan
+    Write-Host "Keep this window open until you see 'Logged in as ...' here." -ForegroundColor Cyan
+    Write-Host ""
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $ghExe auth login --hostname github.com --web --git-protocol https --scopes repo
+    $loginExit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($loginExit -ne 0) {
+        Write-Host "gh auth login exited with code $loginExit." -ForegroundColor Yellow
+    }
 }
 
 function Write-AuthHelp {
     Write-Host ""
     Write-Host "GitHub CLI is not authenticated." -ForegroundColor Yellow
-    Write-Host ""
+    if (Test-IncompleteGhLogin) {
+        Write-Host ""
+        Write-Host "It looks like you approved login in the browser but the CLI never saved a token." -ForegroundColor Yellow
+        Write-Host "Run login again and wait in this window until it finishes (do not close the terminal early)."
+        Write-Host ""
+    }
     Write-Host "Option A - log in once, then deploy:"
-    Write-Host '  $env:Path = "C:\Program Files\Git\cmd;C:\Program Files\GitHub CLI;" + $env:Path'
-    Write-Host '  gh auth login --web --git-protocol https'
-    Write-Host '  .\deploy.ps1'
-    Write-Host ""
-    Write-Host "Option B - let this script start browser login:"
     Write-Host '  .\deploy.ps1 -Login'
     Write-Host ""
-    Write-Host "Option C - set GH_TOKEN (repo scope), then run .\deploy.ps1"
+    Write-Host "Option B - manual login (same PATH this script uses):"
+    Write-Host "  & `"$ghExe`" auth login --hostname github.com --web --git-protocol https --scopes repo"
+    Write-Host "  .\deploy.ps1"
+    Write-Host ""
+    Write-Host "Option C - personal access token (repo scope):"
+    Write-Host '  $env:GH_TOKEN = "ghp_..."   # then run .\deploy.ps1'
     Write-Host ""
 }
 
 Require-Command git "Install Git for Windows: https://git-scm.com/download/win"
-Require-Command gh "Install GitHub CLI: winget install --id GitHub.cli"
+if (-not (Test-Path $ghExe)) {
+    Write-Error "GitHub CLI not found at $ghExe. Install: winget install --id GitHub.cli"
+}
 
 Write-Host "Checking GitHub auth..."
+$shouldLogin = $Login -or ((Test-InteractiveConsole) -and -not (Test-GhAuth))
 if (-not (Test-GhAuth)) {
-    if ($Login) {
-        Write-Host "Not logged in. Starting GitHub device login..."
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        gh auth login --web --git-protocol https
-        $ErrorActionPreference = $prev
+    if ($shouldLogin) {
+        Invoke-GhLogin
     }
     if (-not (Test-GhAuth)) {
         Write-AuthHelp
@@ -84,8 +120,8 @@ if (-not $owner) {
 
 Write-Host "Deploying as $owner/mizu-flow ..."
 
-cmd /c "gh repo view $owner/mizu-flow >nul 2>nul"
-if ($LASTEXITCODE -ne 0) {
+$result = Invoke-Gh repo view "$owner/mizu-flow" -AllowFailure
+if ($result[1] -ne 0) {
     Write-Host "Creating repo and pushing..."
     Invoke-Gh repo create mizu-flow --public --source=. --remote=origin --push | Out-Null
 } else {
